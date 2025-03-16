@@ -11,35 +11,108 @@
 
 #include "can.h"
 
+
+/*
+ * @brief Initialises CAN communication protocol and configures the CAN filter
+ * @param Dumbdash_TypeDef
+ * @param CAN_HandleTypeDef
+ * */
+
+HAL_StatusTypeDef Dumbdash_CAN_HAL_Init(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filter_header) {
+
+
+
+	if (HAL_CAN_Init(hcan) != HAL_OK) {
+		Error_Handler();
+		return HAL_ERROR;
+	}
+
+	filter_header->FilterActivation 		=	ENABLE;
+	filter_header->FilterBank 				= 	0x00;
+	filter_header->FilterIdHigh 			= 	0x00;
+	filter_header->FilterIdLow 			= 	0x00;
+	filter_header->FilterMaskIdHigh 		=	0x00;
+	filter_header->FilterMaskIdLow 		=	0x00;
+	filter_header->FilterMode 				=	CAN_FILTERMODE_IDMASK;
+	filter_header->FilterScale 			= 	CAN_FILTERSCALE_32BIT;
+	filter_header->FilterFIFOAssignment	= 	CAN_FILTER_FIFO0;
+	filter_header->SlaveStartFilterBank 	= 	14;
+
+	if (HAL_CAN_ConfigFilter(hcan, filter_header) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	if (HAL_CAN_Start(hcan) != HAL_OK) {
+		return HAL_ERROR;
+	}
+	//config rx interrupt
+	HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+	return HAL_OK;
+}
+
+
+/*
+ * @brief Init function which initialises time measurements for FSM
+ * @param Dumbdash_TypeDef
+ * @param CAN_Handle_TypeDef
+ *  */
+HAL_StatusTypeDef Dumbdash_Init(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filter_header) {
+	dev->tick_t.current_time 	= 0;
+	dev->tick_t.elapsed_time 	= 0;
+	dev->prev_enc_pos_1 		= 0;
+	dev->prev_enc_pos_2 		= 0;
+	for (uint8_t i = 0; i < 8; i++) {
+		dev->tx_data[i] = 0;
+		dev->rx_data[i] = 0;
+	}
+
+	return Dumbdash_CAN_HAL_Init(hcan, filter_header);
+}
+
 /*
  * @brief 	Abstracted CAN transmission function post init function calls. Supposed to aid with handling CAN errors if present.
  * @param 	Dumbdash_TypeDef
  * @return 	HAL status of CAN transaction
  * */
-HAL_StatusTypeDef Dumbdash_Transmit_CAN_Msg(Dumbdash_TypeDef *dev, uint32_t id, uint32_t length) {
-	dev->tx_header->StdId = id;
-	dev->tx_header->DLC = length;
-	dev->tx_header->IDE = CAN_ID_STD;
-	dev->tx_header->RTR = CAN_RTR_DATA;
-	dev->tx_header->TransmitGlobalTime = DISABLE;
 
-	return HAL_CAN_AddTxMessage(dev->can_handle, dev->tx_header, dev->tx_data, &dev->tx_mailbox);
+HAL_StatusTypeDef Dumbdash_Transmit_CAN_Msg(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx) {
+	//uint32_t tx_mailbox;
+
+	if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0) {
+	        return HAL_BUSY;
+	}
+
+	tx->StdId = dev->id;
+	tx->DLC = dev->len;
+	tx->IDE = CAN_ID_STD;
+	tx->RTR = CAN_RTR_DATA;
+
+	// ensure tx data buffer has been modified prior to calling this function
+	return HAL_CAN_AddTxMessage(hcan, tx, dev->tx_data, NULL);
 }
 
 
 
-// must be able to recieve in order for dumbdash testing to work!!!!
-// must be used in conjunction with the HAL_CAN_RxFifo0MsgPendingCallback function in main.c
-HAL_StatusTypeDef Dumbdash_Receive_CAN_Msg(Dumbdash_TypeDef *dev, uint32_t id, uint32_t length) {
-	dev->rx_header->StdId = id;
-	dev->rx_header->DLC = length;
-	dev->rx_header->IDE = CAN_ID_STD;
-	dev->rx_header->RTR = CAN_RTR_DATA;
+/*
+ * @brief 	Abstracted CAN receive function post init function calls. Supposed to aid with handling CAN errors if present.
+ * @param 	Dumbdash_TypeDef
+ * @param 	CAN_Driver_TypeDef
+ * @return 	HAL status of CAN transaction
+ * */
 
-	//HAL_StatusTypeDef HAL_CAN_GetRxMessage(CAN_HandleTypeDef *hcan, uint32_t RxFifo,
-    //CAN_RxHeaderTypeDef *pHeader, uint8_t aData[])
+HAL_StatusTypeDef Dumbdash_Receive_CAN_Msg(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rx) {
 
-	return HAL_CAN_GetRxMessage(dev->can_handle, CAN_RX_FIFO0, dev->rx_header, dev->rx_data);
+	// must check if a message is available in FIFO 0
+	if (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) == 0) {
+		Error_Handler();
+		return HAL_BUSY;
+	}
+	/// commented out to test loopback
+	 //dev->id = can->rx_header->StdId;
+	 //dev->len = can->rx_header->DLC;
+
+	return HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, rx, dev->rx_data);
 }
 
 
@@ -76,106 +149,61 @@ uint8_t Dumbdash_Read_Rotary_Encoder_Outputs(const uint16_t *output_arr) {
 
 
 
-/*
- * @brief Initialises CAN communication protocol
- * @param Dumbdash_TypeDef
- * @param CAN_HandleTypeDef
- * */
-//CAN_FilterTypeDef can_filter_config;
-void Dumbdash_CAN_HAL_Init(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *can_handle,
-		CAN_TxHeaderTypeDef *tx_header, CAN_RxHeaderTypeDef *rx_header, CAN_FilterTypeDef *filter_header) {
-	dev->can_handle = can_handle;
-	dev->tx_header = tx_header;
-	dev->rx_header = rx_header;
-	dev->filter_header = filter_header;
-
-	HAL_CAN_Start(dev->can_handle);
-	HAL_CAN_ActivateNotification(dev->can_handle, CAN_IT_RX_FIFO0_MSG_PENDING);
-
-	dev->filter_header->FilterActivation = 			ENABLE;
-	dev->filter_header->FilterBank = 				INIT_FILTER_BANK; // 0
-	dev->filter_header->FilterFIFOAssignment = 		CAN_RX_FIFO1;
-	dev->filter_header->FilterIdHigh = 				(0x6C0 << 5);
-	dev->filter_header->FilterIdLow = 				0x0000;
-	dev->filter_header->FilterMaskIdHigh =			(0x7FF << 5);
-	dev->filter_header->FilterMaskIdLow =			0x0000;
-	dev->filter_header->FilterMode =				CAN_FILTERMODE_IDMASK;
-	dev->filter_header->FilterScale = 				CAN_FILTERSCALE_32BIT;
-	dev->filter_header->FilterFIFOAssignment = 		CAN_FILTER_FIFO0;
-	dev->filter_header->SlaveStartFilterBank = 		SLAVE_FILTER_BANK;
-
-	HAL_CAN_ConfigFilter(dev->can_handle, dev->filter_header);
-
-
-
-
-
-}
-
-
-// vv DEFINE IN MAIN.C
-//void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
-//
-//	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK) {
-//		Error_Handler();
-//	}
-	// if rx_header.StdId is something then so something else
-//}
-
-
 
 
 /*
- * @brief Init function which initialises time measurements for FSM
- * @param Dumbdash_TypeDef
- * @param GPIO_TypeDef
- * @param CAN_Handle_TypeDef
- *  */
-void Dumbdash_Init(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *can_handle, CAN_TxHeaderTypeDef *tx_header, CAN_RxHeaderTypeDef *rx_header, CAN_FilterTypeDef *filter_header) {
-	Dumbdash_CAN_HAL_Init(dev, can_handle, tx_header, rx_header, filter_header);
-	//dev->uart_handle = uart_handle;
-	dev->tick_t.current_time = 0;
-	dev->tick_t.elapsed_time = 0;
-	dev->prev_enc_pos_1 = 0;
-	dev->prev_enc_pos_2 = 0;
-}
+ * @brief 	Fills the CAN data field 'low' register with the two outputs from the rotary encoders
+ * @param	Dumbdash_TypeDef
+ * @param 	CAN_Driver_TypeDef
+ * @return	Status of CAN transmission which also requests and begins CAN transmission
+ */
+HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx) {
 
-
-
-/*
- * @brief 	Intended to work with the weak definition of HAL_GPIO_EXTI_Callback to transmit encoder output values through the CAN bus
- * @param 	Dumbdash_TypeDef
- * @param 	condition_1 pin and state condition for pedal map encoder
- * @param 	condition_2 etc...
- * @return 	HAL status enum for future error handling
- * */
-HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data(Dumbdash_TypeDef *dev, volatile uint8_t encoder_1_ready, volatile uint8_t encoder_2_ready) {
-	volatile uint8_t enc_pos_1 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr1); // pedal map select
-	volatile uint8_t enc_pos_2 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr2); // traction control gain
-	HAL_StatusTypeDef status = HAL_ERROR; // common state
-
-	if (encoder_1_ready && (enc_pos_1 != dev->prev_enc_pos_1)) {
-		dev->prev_enc_pos_1 = enc_pos_1;
-		dev->tx_data[0] = enc_pos_1;
-		status = Dumbdash_Transmit_CAN_Msg(dev, CAN_ID_ROTARY_ENCODER, 2);
+	if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0) {
+		return HAL_BUSY;
 	}
-	if (encoder_2_ready && (enc_pos_2 != dev->prev_enc_pos_2)) {
-		dev->prev_enc_pos_2 = enc_pos_2;
-		dev->tx_data[1] = enc_pos_2;
-		status = Dumbdash_Transmit_CAN_Msg(dev, CAN_ID_ROTARY_ENCODER, 2);
-	}
-	return status;
-}
 
-
-// more refined version of above function, only using polling
-HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data_v2(Dumbdash_TypeDef *dev) {
+	// saved outputs to struct member for future debugging
 	dev->prev_enc_pos_1 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr1);
 	dev->prev_enc_pos_2 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr2);
-	dev->tx_data[0] = dev->prev_enc_pos_1;
-	dev->tx_data[1] = dev->prev_enc_pos_2;
-	return Dumbdash_Transmit_CAN_Msg(dev, CAN_ID_ROTARY_ENCODER, 2);
+	dev->tx_data[0] 	= dev->prev_enc_pos_1;
+	dev->tx_data[1] 	= dev->prev_enc_pos_2;
+	dev->id 			= CAN_ID_ROTARY_ENCODER;
+	dev->len			= 2;
+
+	return Dumbdash_Transmit_CAN_Msg(dev, hcan, tx);
 }
+
+#define TEST_CAN_ID 	((uint32_t)	0x01)
+
+// ensure loopback is enabled
+HAL_StatusTypeDef Test_Loopback(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx, CAN_RxHeaderTypeDef *rx) {
+	dev->id = TEST_CAN_ID; //using stdid
+	dev->len= 1;
+	dev->tx_data[0] = 0x0F;
+
+	if (Dumbdash_Transmit_CAN_Msg(dev, hcan, tx) != HAL_OK) {
+		Error_Handler();
+		return HAL_ERROR;
+	}
+
+	if (Dumbdash_Receive_CAN_Msg(dev, hcan, rx) != HAL_OK) {
+		Error_Handler();
+		return HAL_ERROR;
+	}
+
+	if (rx->StdId 	!= TEST_CAN_ID		||
+		rx->DLC 	!= 1				||
+		rx->IDE		!= CAN_ID_STD		||
+		dev->rx_data[0] 		!= 0x0F) {
+
+		return HAL_ERROR;
+	}
+
+
+	return HAL_OK; // all tests passed if true
+}
+
 
 
 /*
@@ -185,7 +213,7 @@ HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data_v2(Dumbdash_TypeDef *dev) {
  * @param 	data_ready_flag		Toggles to '1' upon external interrupt, used to trigger the function
  * @return	HAL status enum to prevent undefined behaviour
  * */
-HAL_StatusTypeDef Dumbdash_Launch_Control_Interrupt_FSM(Dumbdash_TypeDef *dev, volatile uint8_t data_ready_flag) {
+HAL_StatusTypeDef Dumbdash_Launch_Control_Interrupt_FSM(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx, volatile uint8_t data_ready_flag) {
 
 	dev->tick_t.current_time = HAL_GetTick();
 	HAL_StatusTypeDef can_status = HAL_ERROR; // known state for debugging
@@ -212,10 +240,12 @@ HAL_StatusTypeDef Dumbdash_Launch_Control_Interrupt_FSM(Dumbdash_TypeDef *dev, v
 		memset(dev->tx_data, 0x00, sizeof(dev->tx_data));
 
 		dev->tx_data[0] = CAN_DATA_FIELD_LAUNCH_CONTROL_ON;
-		can_status = Dumbdash_Transmit_CAN_Msg(dev, CAN_ID_LAUNCH_CONTROL, 1);
+		dev->id			= CAN_ID_LAUNCH_CONTROL;
+		can_status = Dumbdash_Transmit_CAN_Msg(dev, hcan, tx);
 
 		dev->tx_data[0] = CAN_DATA_FIELD_LC_LED_STATUS_ON;
-		can_status = Dumbdash_Transmit_CAN_Msg(dev, CAN_ID_BUTTON_LED_STATUS, 1);
+		dev->id			= CAN_ID_BUTTON_LED_STATUS;
+		can_status = Dumbdash_Transmit_CAN_Msg(dev, hcan, tx);
 
 		dev->current_state = IDLE_lcb;
 		break;
@@ -260,5 +290,3 @@ void Dumbdash_Encoder_UART_TestFunc(Dumbdash_TypeDef *dev, HAL_StatusTypeDef sta
 
 }
 */
-
-
