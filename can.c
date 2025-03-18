@@ -2,11 +2,11 @@
  * can.c
  *
  *  Created on: Feb 20, 2025
- *      Author: poo brain
+ *      Author: Adam Berta (Electrical Lead)
  *
  *
  *
- * 3am moment
+ *
  */
 
 #include "can.h"
@@ -20,23 +20,34 @@
 
 HAL_StatusTypeDef Dumbdash_CAN_HAL_Init(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filter_header) {
 
+	__HAL_RCC_CAN1_CLK_ENABLE();
+	hcan->Instance = CAN;
+	hcan->Init.Prescaler = 6; // Adjust for desired baud rate
+	hcan->Init.Mode = CAN_MODE_LOOPBACK; // Loopback mode
+	hcan->Init.SyncJumpWidth = CAN_SJW_1TQ;
+	hcan->Init.TimeSeg1 = CAN_BS1_8TQ;
+	hcan->Init.TimeSeg2 = CAN_BS2_3TQ;
+	hcan->Init.TimeTriggeredMode = DISABLE;
+	hcan->Init.AutoBusOff = DISABLE;
+	hcan->Init.AutoWakeUp = DISABLE;
+	hcan->Init.AutoRetransmission = DISABLE;
+	hcan->Init.ReceiveFifoLocked = DISABLE;
+	hcan->Init.TransmitFifoPriority = DISABLE;
 
 
 	if (HAL_CAN_Init(hcan) != HAL_OK) {
-		Error_Handler();
 		return HAL_ERROR;
 	}
 
-	filter_header->FilterActivation 		=	ENABLE;
-	filter_header->FilterBank 				= 	0x00;
-	filter_header->FilterIdHigh 			= 	0x00;
-	filter_header->FilterIdLow 			= 	0x00;
-	filter_header->FilterMaskIdHigh 		=	0x00;
-	filter_header->FilterMaskIdLow 		=	0x00;
-	filter_header->FilterMode 				=	CAN_FILTERMODE_IDMASK;
-	filter_header->FilterScale 			= 	CAN_FILTERSCALE_32BIT;
-	filter_header->FilterFIFOAssignment	= 	CAN_FILTER_FIFO0;
-	filter_header->SlaveStartFilterBank 	= 	14;
+	filter_header->FilterBank = 0;
+	filter_header->FilterMode = CAN_FILTERMODE_IDMASK;
+	filter_header->FilterScale = CAN_FILTERSCALE_32BIT;
+	filter_header->FilterIdHigh = 0x0000;
+	filter_header->FilterIdLow = 0x0000;
+	filter_header->FilterMaskIdHigh = 0x0000;
+	filter_header->FilterMaskIdLow = 0x0000;
+	filter_header->FilterFIFOAssignment = CAN_RX_FIFO0;
+	filter_header->FilterActivation = ENABLE;
 
 	if (HAL_CAN_ConfigFilter(hcan, filter_header) != HAL_OK) {
 		return HAL_ERROR;
@@ -46,8 +57,7 @@ HAL_StatusTypeDef Dumbdash_CAN_HAL_Init(CAN_HandleTypeDef *hcan, CAN_FilterTypeD
 		return HAL_ERROR;
 	}
 	//config rx interrupt
-	HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
-
+	//HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 	return HAL_OK;
 }
 
@@ -67,7 +77,7 @@ HAL_StatusTypeDef Dumbdash_Init(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, 
 		dev->rx_data[i] = 0;
 	}
 
-	return Dumbdash_CAN_HAL_Init(hcan, filter_header);
+	return Dumbdash_CAN_HAL_Init(hcan, filter_header); // will have to change this soon I think
 }
 
 /*
@@ -77,19 +87,12 @@ HAL_StatusTypeDef Dumbdash_Init(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, 
  * */
 
 HAL_StatusTypeDef Dumbdash_Transmit_CAN_Msg(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx) {
-	//uint32_t tx_mailbox;
-
-	if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0) {
-	        return HAL_BUSY;
-	}
-
-	tx->StdId = dev->id;
-	tx->DLC = dev->len;
+	uint32_t tx_mailbox;
 	tx->IDE = CAN_ID_STD;
 	tx->RTR = CAN_RTR_DATA;
-
-	// ensure tx data buffer has been modified prior to calling this function
-	return HAL_CAN_AddTxMessage(hcan, tx, dev->tx_data, NULL);
+	tx->DLC = dev->len;
+	tx->StdId = dev->id;
+	return HAL_CAN_AddTxMessage(hcan, tx, dev->tx_data, &tx_mailbox);
 }
 
 
@@ -102,16 +105,7 @@ HAL_StatusTypeDef Dumbdash_Transmit_CAN_Msg(Dumbdash_TypeDef *dev, CAN_HandleTyp
  * */
 
 HAL_StatusTypeDef Dumbdash_Receive_CAN_Msg(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rx) {
-
-	// must check if a message is available in FIFO 0
-	if (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) == 0) {
-		Error_Handler();
-		return HAL_BUSY;
-	}
-	/// commented out to test loopback
-	 //dev->id = can->rx_header->StdId;
-	 //dev->len = can->rx_header->DLC;
-
+	while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) == 0);
 	return HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, rx, dev->rx_data);
 }
 
@@ -131,6 +125,9 @@ const uint16_t rot_enc_arr2[4] = {
 		GPIO_PIN_6,
 		GPIO_PIN_7
 };
+
+
+
 //-----------------------------------
 
 
@@ -159,10 +156,6 @@ uint8_t Dumbdash_Read_Rotary_Encoder_Outputs(const uint16_t *output_arr) {
  */
 HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx) {
 
-	if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0) {
-		return HAL_BUSY;
-	}
-
 	// saved outputs to struct member for future debugging
 	dev->prev_enc_pos_1 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr1);
 	dev->prev_enc_pos_2 = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr2);
@@ -174,8 +167,15 @@ HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data(Dumbdash_TypeDef *dev, CAN_Hand
 	return Dumbdash_Transmit_CAN_Msg(dev, hcan, tx);
 }
 
-#define TEST_CAN_ID 	((uint32_t)	0x01)
+HAL_StatusTypeDef Test_Read(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx) {
+	dev->tx_data[0] = Dumbdash_Read_Rotary_Encoder_Outputs(rot_enc_arr2);
+	dev->tx_data[1] = 0;
+	dev->id 		= CAN_ID_ROTARY_ENCODER;
+	dev->len		= 2;
+	return Dumbdash_Transmit_CAN_Msg(dev, hcan, tx);
+}
 
+#define TEST_CAN_ID 	((uint32_t)	0x49B)
 // ensure loopback is enabled
 HAL_StatusTypeDef Test_Loopback(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx, CAN_RxHeaderTypeDef *rx) {
 	dev->id = TEST_CAN_ID; //using stdid
@@ -183,12 +183,12 @@ HAL_StatusTypeDef Test_Loopback(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, 
 	dev->tx_data[0] = 0x0F;
 
 	if (Dumbdash_Transmit_CAN_Msg(dev, hcan, tx) != HAL_OK) {
-		Error_Handler();
+		//Error_Handler();
 		return HAL_ERROR;
 	}
 
 	if (Dumbdash_Receive_CAN_Msg(dev, hcan, rx) != HAL_OK) {
-		Error_Handler();
+		//Error_Handler();
 		return HAL_ERROR;
 	}
 
@@ -237,7 +237,7 @@ HAL_StatusTypeDef Dumbdash_Launch_Control_Interrupt_FSM(Dumbdash_TypeDef *dev, C
 
 	case TRANSMIT_CAN_MSG_lcb:
 
-		memset(dev->tx_data, 0x00, sizeof(dev->tx_data));
+		//memset(dev->tx_data, 0x00, sizeof(dev->tx_data));
 
 		dev->tx_data[0] = CAN_DATA_FIELD_LAUNCH_CONTROL_ON;
 		dev->id			= CAN_ID_LAUNCH_CONTROL;
