@@ -8,10 +8,10 @@
 #ifndef INC_CAN_H_
 #define INC_CAN_H_
 
-#include "stm32f3xx_hal.h"
-#include "stm32f3xx_hal_can.h"
-#include "stm32f3xx_hal_gpio.h"
-//#include "stm32f3xx_hal_uart.h"
+#include "stm32f0xx_hal.h"
+#include "stm32f0xx_hal_can.h"
+#include "stm32f0xx_hal_gpio.h"
+#include "stm32f042x6.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -68,7 +68,7 @@ uint8_t Dumbdash_Read_Rotary_Encoder_Outputs(const uint16_t *output_arr);
 HAL_StatusTypeDef Dumbdash_Transmit_Encoder_Data(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx);
 HAL_StatusTypeDef Test_Loopback(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx, CAN_RxHeaderTypeDef *rx);
 HAL_StatusTypeDef Dumbdash_Launch_Control_Interrupt_FSM(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx, volatile uint8_t data_ready_flag);
-
+HAL_StatusTypeDef Test_Read(Dumbdash_TypeDef *dev, CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *tx);
 
 
 #endif /* INC_CAN_H_ */
